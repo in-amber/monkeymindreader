@@ -21,3 +21,7 @@ build/
 
 # Claude
 for_claude/
+
+# Training outputs
+results/
+checkpoints/
