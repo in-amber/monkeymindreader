@@ -25,3 +25,5 @@ for_claude/
 # Training outputs
 results/
 checkpoints/
+results_mini/
+runs/

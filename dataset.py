@@ -137,7 +137,7 @@ class NeuralForecastDataset(Dataset):
 
         # Split into input and target
         x = sample[:self.observed_steps]  # [10, C, F]
-        y = sample[self.observed_steps:, :, 0]  # [10, C] - only feature[0]
+        y = sample[self.observed_steps:]  # [10, C, F] - all features for auxiliary loss
 
         # Apply augmentation to input only
         if self.augmentation is not None and self.training:

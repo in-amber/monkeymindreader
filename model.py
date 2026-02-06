@@ -12,22 +12,45 @@ import torch.nn as nn
 
 class FeatureEncoder(nn.Module):
     """
-    Transforms 9 raw features per electrode into a d-dimensional representation.
-    Uses a shared MLP across all electrodes and timesteps.
+    Feature-specific encoder with separate pathways for target signal and frequency bands.
+
+    Feature[0] is the target signal we're predicting, while features[1-8] are frequency
+    band powers. These have different semantics, so we encode them separately before fusing.
     """
     def __init__(self, input_dim=9, hidden_dim=32, output_dim=64):
         super().__init__()
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+        half_dim = output_dim // 2
+
+        # Separate encoder for target signal (feature 0)
+        self.target_encoder = nn.Sequential(
+            nn.Linear(1, hidden_dim),
             nn.GELU(),
             nn.LayerNorm(hidden_dim),
-            nn.Linear(hidden_dim, output_dim),
+            nn.Linear(hidden_dim, half_dim),
+            nn.LayerNorm(half_dim),
+        )
+
+        # Separate encoder for frequency bands (features 1-8)
+        self.freq_encoder = nn.Sequential(
+            nn.Linear(input_dim - 1, hidden_dim),
+            nn.GELU(),
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, half_dim),
+            nn.LayerNorm(half_dim),
+        )
+
+        # Fusion layer to combine both pathways
+        self.fusion = nn.Sequential(
+            nn.Linear(output_dim, output_dim),
             nn.LayerNorm(output_dim),
         )
 
     def forward(self, x):
-        # x: [B, T, C, F] -> [B, T, C, d]
-        return self.encoder(x)
+        # x: [B, T, C, F] where F=9
+        target = self.target_encoder(x[..., :1])       # [B, T, C, d/2]
+        freq = self.freq_encoder(x[..., 1:])           # [B, T, C, d/2]
+        fused = torch.cat([target, freq], dim=-1)      # [B, T, C, d]
+        return self.fusion(fused)                      # [B, T, C, d]
 
 
 class SinusoidalPositionalEncoding(nn.Module):
@@ -107,10 +130,27 @@ class FactorizedSpatiotemporalBlock(nn.Module):
 
 class PredictionHead(nn.Module):
     """
-    Predicts future timesteps from encoded representations.
+    Attention-based prediction head that learns to weight relevant timesteps.
+
+    Instead of just using the last timestep, this head uses a learnable query
+    that attends to all encoded timesteps, allowing the model to aggregate
+    information from the full temporal context.
     """
-    def __init__(self, d_model, n_future=10):
+    def __init__(self, d_model, n_future=10, n_heads=4, dropout=0.1):
         super().__init__()
+        self.d_model = d_model
+        self.n_future = n_future
+
+        # Learnable query token for attending to temporal sequence
+        self.query = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+
+        # Cross-attention: query attends to encoded sequence
+        self.attn = nn.MultiheadAttention(
+            d_model, n_heads, dropout=dropout, batch_first=True
+        )
+        self.attn_norm = nn.LayerNorm(d_model)
+
+        # Prediction MLP
         self.head = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.GELU(),
@@ -118,10 +158,28 @@ class PredictionHead(nn.Module):
         )
 
     def forward(self, x):
-        # x: [B, T, C, d] - take last timestep
-        if x.dim() == 4:
-            x = x[:, -1, :, :]  # [B, C, d]
-        return self.head(x)  # [B, C, 10]
+        # x: [B, T, C, d]
+        if x.dim() == 3:
+            # Already [B, C, d] - just apply head directly
+            return self.head(x)
+
+        B, T, C, d = x.shape
+
+        # Reshape to [B*C, T, d] for per-electrode attention
+        x_flat = x.permute(0, 2, 1, 3).reshape(B * C, T, d)
+
+        # Expand query for all samples: [B*C, 1, d]
+        query = self.query.expand(B * C, 1, d)
+
+        # Cross-attention: query attends to all timesteps
+        attended, _ = self.attn(query, x_flat, x_flat)  # [B*C, 1, d]
+        attended = self.attn_norm(query + attended)      # Residual connection
+
+        # Reshape back to [B, C, d]
+        attended = attended.squeeze(1).reshape(B, C, d)
+
+        # Predict future timesteps
+        return self.head(attended)  # [B, C, n_future]
 
 
 class NeuralForecaster(nn.Module):
@@ -157,26 +215,53 @@ class NeuralForecaster(nn.Module):
             FactorizedSpatiotemporalBlock(d_model, n_heads, dropout)
             for _ in range(n_layers)
         ])
-        self.pred_head = PredictionHead(d_model, n_future)
+        self.pred_head = PredictionHead(d_model, n_future, dropout=dropout)
 
-    def encode(self, x):
-        """Encode input through feature encoder, positional encoding, and transformer blocks."""
+        # Auxiliary head for predicting frequency bands (features 1-8)
+        # Uses simpler MLP since auxiliary task is secondary
+        self.aux_pred_head = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, n_future * (n_features - 1)),  # Predict all freq bands
+        )
+        self.n_aux_features = n_features - 1  # 8 frequency bands
+
+    def encode(self, x, causal=True):
+        """Encode input through feature encoder, positional encoding, and transformer blocks.
+
+        Args:
+            x: Input tensor of shape [B, T, C, F]
+            causal: If True, use causal masking in temporal attention (each timestep
+                    can only attend to itself and previous timesteps)
+        """
         z = self.feature_encoder(x)
         z = self.pos_encoding(z)
+
+        # Create causal mask for temporal attention
+        T = z.size(1)
+        temporal_mask = None
+        if causal:
+            temporal_mask = torch.triu(
+                torch.ones(T, T, device=z.device) * float('-inf'),
+                diagonal=1
+            )
+
         for block in self.blocks:
-            z = block(z)
+            z = block(z, temporal_mask=temporal_mask)
         return z
 
-    def forward(self, x, use_refinement=True):
+    def forward(self, x, use_refinement=True, return_aux=False):
         """
         Forward pass with optional iterative refinement.
 
         Args:
             x: Input tensor of shape [B, T, C, F] where T=10 (observed timesteps)
             use_refinement: Whether to use iterative refinement
+            return_aux: Whether to return auxiliary predictions for frequency bands
 
         Returns:
-            Predictions of shape [B, n_future, C] (only feature[0])
+            If return_aux=False: pred of shape [B, n_future, C] (feature[0] only)
+            If return_aux=True: (pred, pred_aux) where pred_aux is [B, n_future, C, 8]
         """
         B, T, C, F = x.shape
 
@@ -184,11 +269,23 @@ class NeuralForecaster(nn.Module):
         encoded = self.encode(x)
         pred = self.pred_head(encoded).permute(0, 2, 1)  # [B, 10, C]
 
+        # Auxiliary prediction (frequency bands)
+        pred_aux = None
+        if return_aux:
+            # Use last timestep encoding for auxiliary prediction
+            last_encoded = encoded[:, -1, :, :]  # [B, C, d]
+            aux_flat = self.aux_pred_head(last_encoded)  # [B, C, n_future * 8]
+            pred_aux = aux_flat.view(B, C, self.n_future, self.n_aux_features)
+            pred_aux = pred_aux.permute(0, 2, 1, 3)  # [B, n_future, C, 8]
+
         if use_refinement and self.n_refinement_iters > 0:
             for _ in range(self.n_refinement_iters):
-                # Create predicted features tensor (zeros for auxiliary features)
-                pred_features = torch.zeros(B, self.n_future, C, F, device=x.device)
-                pred_features[:, :, :, 0] = pred  # Only fill in predicted feature[0]
+                # Create predicted features tensor
+                # Use last observed auxiliary features instead of zeros to avoid
+                # distribution shift (model was trained on normalized data with
+                # non-zero auxiliary features)
+                pred_features = x[:, -1:, :, :].expand(-1, self.n_future, -1, -1).clone()
+                pred_features[:, :, :, 0] = pred  # Replace feature[0] with predictions
 
                 # Concatenate observed and predicted sequences
                 full_seq = torch.cat([x, pred_features], dim=1)  # [B, 20, C, F]
@@ -200,6 +297,8 @@ class NeuralForecaster(nn.Module):
                 future_encoded = full_encoded[:, T:, :, :]  # [B, 10, C, d]
                 pred = self.pred_head(future_encoded.mean(dim=1)).permute(0, 2, 1)
 
+        if return_aux:
+            return pred, pred_aux
         return pred
 
     def predict(self, x):
