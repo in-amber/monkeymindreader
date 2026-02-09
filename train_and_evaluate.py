@@ -44,7 +44,7 @@ TRAINING_MODES = {
         'n_layers': 4,
         'learning_rate': 3e-4,
         'n_epochs': 200,
-        'batch_size': {'beignet': 64, 'affi': 64},
+        'batch_size': {'beignet': 64, 'affi': 16},
         'patience': 30,
         'dropout': 0.2,
         'n_refinement_iters': 1,
