@@ -14,33 +14,60 @@ class PerSampleNormalizer:
     """
     Per-sample normalization for handling session drift.
     Critical for cross-session generalization where signal magnitude may change.
+
+    Statistics are computed from observed timesteps only, so normalization
+    is identical during training and challenge inference (where future
+    timesteps are unavailable).
     """
     @staticmethod
-    def normalize(x, eps=1e-8):
+    def normalize(x, observed_steps=None, eps=1e-8):
         """
-        Normalize each sample independently.
+        Normalize each sample independently using observed timesteps only.
 
         Args:
             x: Tensor of shape [B, T, C, F] or numpy array
+            observed_steps: Number of observed timesteps to compute stats from.
+                If None, uses all timesteps (legacy behavior).
             eps: Small value for numerical stability
 
         Returns:
-            Normalized data, mean, std (for potential denormalization)
+            Normalized data, mean, std (for denormalization)
         """
         if isinstance(x, np.ndarray):
             x = torch.from_numpy(x).float()
 
         B, T, C, F = x.shape
-        # Flatten time and channels for computing statistics per sample
+
+        # Compute statistics from observed portion only
+        ref = x[:, :observed_steps] if observed_steps is not None else x
+        ref_flat = ref.reshape(B, -1, F)
+        mean = ref_flat.mean(dim=1, keepdim=True)  # [B, 1, F]
+        std = ref_flat.std(dim=1, keepdim=True) + eps  # [B, 1, F]
+
+        # Apply normalization to the full sequence
         x_flat = x.reshape(B, T * C, F)
-        mean = x_flat.mean(dim=1, keepdim=True)
-        std = x_flat.std(dim=1, keepdim=True) + eps
         x_norm = (x_flat - mean) / std
         return x_norm.reshape(B, T, C, F), mean, std
 
     @staticmethod
     def denormalize(x_norm, mean, std):
-        """Reverse normalization."""
+        """Reverse normalization.
+
+        Args:
+            x_norm: Normalized tensor of shape [B, T, C, F] or [B, T, C]
+            mean: Per-sample mean from normalize() [B, 1, F]
+            std: Per-sample std from normalize() [B, 1, F]
+
+        Returns:
+            Denormalized tensor in original units
+        """
+        if x_norm.dim() == 3:
+            # [B, T, C] — single feature (e.g. target predictions)
+            # Use first feature's stats: mean[:, :, 0], std[:, :, 0]
+            B, T, C = x_norm.shape
+            m = mean[:, :, 0:1]  # [B, 1, 1]
+            s = std[:, :, 0:1]   # [B, 1, 1]
+            return x_norm * s + m
         B, T, C, F = x_norm.shape
         x_flat = x_norm.reshape(B, -1, F)
         x_denorm = x_flat * std + mean
@@ -130,10 +157,14 @@ class NeuralForecastDataset(Dataset):
         # Convert to tensor
         sample = torch.tensor(sample, dtype=torch.float32)
 
-        # Add batch dimension for normalization, then remove
+        # Normalize using observed timesteps only (no data leakage from future)
         sample = sample.unsqueeze(0)  # [1, T, C, F]
-        sample, mean, std = self.normalizer.normalize(sample)
+        sample, mean, std = self.normalizer.normalize(
+            sample, observed_steps=self.observed_steps
+        )
         sample = sample.squeeze(0)  # [T, C, F]
+        mean = mean.squeeze(0)      # [1, F]
+        std = std.squeeze(0)        # [1, F]
 
         # Split into input and target
         x = sample[:self.observed_steps]  # [10, C, F]
@@ -145,7 +176,7 @@ class NeuralForecastDataset(Dataset):
             x = self.augmentation(x, training=True)
             x = x.squeeze(0)
 
-        return x, y
+        return x, y, mean, std
 
 
 def load_monkey_data(monkey_name, data_dir='train_data_neuro', include_private=True):
