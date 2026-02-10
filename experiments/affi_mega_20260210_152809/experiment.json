@@ -1,0 +1,101 @@
+{
+  "timestamp": "20260210_152809",
+  "total_train_time_seconds": 949.3,
+  "environment": {
+    "hostname": "DESKTOP-M6AS54J",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "python_version": "3.10.9",
+    "pytorch_version": "2.10.0+cu126",
+    "cuda_available": true,
+    "mps_available": false,
+    "cuda_version": "12.6",
+    "gpu_name": "NVIDIA GeForce GTX 1660 SUPER",
+    "gpu_vram_gb": 6.44,
+    "git_commit": "8ccbf816282a1ec8bbb3e8c6730ba704822f9b27"
+  },
+  "monkey": "affi",
+  "mode": "mega",
+  "config": {
+    "d_model": 128,
+    "n_heads": 8,
+    "n_layers": 4,
+    "learning_rate": 0.0003,
+    "n_epochs": 200,
+    "batch_size": 16,
+    "patience": 30,
+    "dropout": 0.2,
+    "n_refinement_iters": 1
+  },
+  "loss_config": {
+    "smoothness_weight": 0.0,
+    "aux_weight": 0.01,
+    "main_loss": "huber",
+    "huber_delta": 1.0
+  },
+  "device": "cuda",
+  "dataset": {
+    "n_train": 917,
+    "n_val": 114,
+    "n_test": 116,
+    "n_channels": 239,
+    "n_features": 9,
+    "observed_steps": 10,
+    "future_steps": 10
+  },
+  "model": {
+    "n_params": 1191098
+  },
+  "training": {
+    "epochs_trained": 46,
+    "best_epoch": 15,
+    "early_stopped": true,
+    "final_lr": 0.000284819106944875
+  },
+  "results": {
+    "test_mse_normalized": 1.5946170538663864,
+    "test_mse_original": 55452.1201171875,
+    "best_val_mse_normalized": 1.3734745979309082,
+    "per_timestep_mse_original": [
+      25976.18359375,
+      35106.75,
+      39322.47265625,
+      48052.2421875,
+      58233.02734375,
+      64924.59375,
+      68598.7421875,
+      67851.703125,
+      67066.96875,
+      67911.296875
+    ],
+    "per_channel_mse_original": {
+      "mean": 54304.3984375,
+      "std": 49480.171875,
+      "min": 28383.4296875,
+      "max": 752831.3125,
+      "worst_5_channels": [
+        158,
+        176,
+        155,
+        177,
+        154
+      ],
+      "best_5_channels": [
+        27,
+        4,
+        21,
+        10,
+        164
+      ]
+    },
+    "prediction_stats": {
+      "pred_mean": 298.109375,
+      "pred_std": 552.813232421875,
+      "pred_min": -3907.2978515625,
+      "pred_max": 3484.24267578125,
+      "target_mean": 314.84283447265625,
+      "target_std": 571.1557006835938,
+      "target_min": -9718.822265625,
+      "target_max": 4058.73095703125
+    }
+  }
+}
