@@ -40,7 +40,9 @@ def get_environment_info():
     if torch.cuda.is_available():
         info['cuda_version'] = torch.version.cuda
         info['gpu_name'] = torch.cuda.get_device_name(0)
-        info['gpu_vram_gb'] = round(torch.cuda.get_device_properties(0).total_mem / 1e9, 2)
+        props = torch.cuda.get_device_properties(0)
+        total = getattr(props, 'total_memory', None) or getattr(props, 'total_mem', 0)
+        info['gpu_vram_gb'] = round(total / 1e9, 2)
     # Try to get git commit hash
     try:
         info['git_commit'] = subprocess.check_output(
