@@ -83,10 +83,11 @@ TRAINING_MODES = {
 
 
 class ForecastingLoss(nn.Module):
-    def __init__(self, smoothness_weight=0.01, aux_weight=0.1):
+    def __init__(self, smoothness_weight=0.0, aux_weight=0.01):
         super().__init__()
         self.smoothness_weight = smoothness_weight
         self.aux_weight = aux_weight
+        self.main_loss_fn = nn.HuberLoss(delta=1.0)
         self.mse = nn.MSELoss()
 
     def forward(self, pred, target_main, pred_aux=None, target_aux=None,
@@ -101,8 +102,8 @@ class ForecastingLoss(nn.Module):
             target_aux: Auxiliary targets [B, T, C, 8] for frequency bands (optional)
             return_components: If True, also return dict of individual loss components
         """
-        # Main prediction loss
-        main_loss = self.mse(pred, target_main)
+        # Main prediction loss (Huber for robust training, MSE for tracking)
+        main_loss = self.main_loss_fn(pred, target_main)
         total_loss = main_loss
 
         # Smoothness regularization
@@ -159,7 +160,7 @@ def save_experiment_log(
         'monkey': monkey_name,
         'mode': mode,
         'config': {k: v for k, v in config.items()},
-        'loss_config': {'smoothness_weight': 0.01, 'aux_weight': 0.1},
+        'loss_config': {'smoothness_weight': 0.0, 'aux_weight': 0.01, 'main_loss': 'huber', 'huber_delta': 1.0},
         'device': str(device),
         'dataset': {
             'n_train': n_train,
@@ -448,7 +449,7 @@ def train_and_evaluate(
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
     total_steps = n_epochs * len(train_loader)
     scheduler = get_lr_scheduler(optimizer, total_steps)
-    criterion = ForecastingLoss(smoothness_weight=0.01, aux_weight=0.1)
+    criterion = ForecastingLoss(smoothness_weight=0.0, aux_weight=0.01)
 
     # Training history (per-epoch)
     history = {
