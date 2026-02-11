@@ -75,7 +75,8 @@ TRAINING_MODES = {
         'learning_rate': 3e-4,
         'n_epochs': 200,
         'batch_size': {'beignet': 64, 'affi': 16},
-        'patience': 30,
+        'patience': 50,
+        'min_epochs': 30,
         'dropout': 0.2,
         'n_refinement_iters': 1,
     },
@@ -392,6 +393,7 @@ def train_and_evaluate(
     n_epochs = config['n_epochs']
     batch_size = config['batch_size'][monkey_name]
     patience = config['patience']
+    min_epochs = config.get('min_epochs', 0)
     dropout = config['dropout']
     n_refinement_iters = config['n_refinement_iters']
 
@@ -567,7 +569,7 @@ def train_and_evaluate(
         if epoch % 10 == 0 or epoch == n_epochs - 1:
             print(f"Epoch {epoch:3d} | Train: {train_loss:.6f} | Val MSE: {val_mse:.6f} | Original MSE: {val_mse_original:.2f} | {epoch_time:.1f}s", flush=True)
 
-        if patience_counter >= patience:
+        if patience_counter >= patience and epoch >= min_epochs:
             print(f"Early stopping at epoch {epoch}", flush=True)
             break
 

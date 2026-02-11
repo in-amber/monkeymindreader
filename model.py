@@ -211,11 +211,29 @@ class NeuralForecaster(nn.Module):
 
         self.feature_encoder = FeatureEncoder(n_features, 32, d_model)
         self.pos_encoding = SinusoidalPositionalEncoding(d_model)
+
+        # Learnable spatial (channel) embeddings — gives the model channel identity
+        # so it can learn per-channel dynamics and cross-channel correlations.
+        # NOTE: This assumes consistent electrode ordering across sessions. The
+        # challenge involves cross-session evaluation where recording drift may
+        # shift electrode characteristics. If this hurts generalization, consider
+        # removing or adding dropout to these embeddings.
+        self.channel_embedding = nn.Parameter(
+            torch.randn(1, 1, n_channels, d_model) * 0.02
+        )
+
         self.blocks = nn.ModuleList([
             FactorizedSpatiotemporalBlock(d_model, n_heads, dropout)
             for _ in range(n_layers)
         ])
         self.pred_head = PredictionHead(d_model, n_future, dropout=dropout)
+
+        # Per-channel output scaling — lets easy channels be handled trivially
+        # while the model focuses capacity on harder patterns.
+        # NOTE: Same session-drift caveat as channel_embedding above. If
+        # per-channel scale/bias overfit to training sessions, consider removing.
+        self.channel_scale = nn.Parameter(torch.ones(1, 1, n_channels))
+        self.channel_bias = nn.Parameter(torch.zeros(1, 1, n_channels))
 
         # Auxiliary head for predicting frequency bands (features 1-8)
         # Uses simpler MLP since auxiliary task is secondary
@@ -236,6 +254,7 @@ class NeuralForecaster(nn.Module):
         """
         z = self.feature_encoder(x)
         z = self.pos_encoding(z)
+        z = z + self.channel_embedding[:, :, :z.size(2), :]
 
         # Create causal mask for temporal attention
         T = z.size(1)
@@ -268,6 +287,7 @@ class NeuralForecaster(nn.Module):
         # Initial encoding and prediction
         encoded = self.encode(x)
         pred = self.pred_head(encoded).permute(0, 2, 1)  # [B, 10, C]
+        pred = pred * self.channel_scale + self.channel_bias
 
         # Auxiliary prediction (frequency bands)
         pred_aux = None
@@ -296,6 +316,7 @@ class NeuralForecaster(nn.Module):
                 # Extract encoding for future timesteps and predict
                 future_encoded = full_encoded[:, T:, :, :]  # [B, 10, C, d]
                 pred = self.pred_head(future_encoded.mean(dim=1)).permute(0, 2, 1)
+                pred = pred * self.channel_scale + self.channel_bias
 
         if return_aux:
             return pred, pred_aux
