@@ -1,6 +1,6 @@
 """
 Neural Time-Series Forecasting Model
-Factorized Spatiotemporal Encoder with Iterative Refinement
+Factorized Spatiotemporal Encoder with Autoregressive Decoding
 
 Based on the implementation plan for the NSF HDR Neural Forecasting Challenge.
 """
@@ -128,68 +128,22 @@ class FactorizedSpatiotemporalBlock(nn.Module):
         return x
 
 
-class PredictionHead(nn.Module):
-    """
-    Attention-based prediction head that learns to weight relevant timesteps.
-
-    Instead of just using the last timestep, this head uses a learnable query
-    that attends to all encoded timesteps, allowing the model to aggregate
-    information from the full temporal context.
-    """
-    def __init__(self, d_model, n_future=10, n_heads=4, dropout=0.1):
-        super().__init__()
-        self.d_model = d_model
-        self.n_future = n_future
-
-        # Learnable query token for attending to temporal sequence
-        self.query = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
-
-        # Cross-attention: query attends to encoded sequence
-        self.attn = nn.MultiheadAttention(
-            d_model, n_heads, dropout=dropout, batch_first=True
-        )
-        self.attn_norm = nn.LayerNorm(d_model)
-
-        # Prediction MLP
-        self.head = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.GELU(),
-            nn.Linear(d_model, n_future),
-        )
-
-    def forward(self, x):
-        # x: [B, T, C, d]
-        if x.dim() == 3:
-            # Already [B, C, d] - just apply head directly
-            return self.head(x)
-
-        B, T, C, d = x.shape
-
-        # Reshape to [B*C, T, d] for per-electrode attention
-        x_flat = x.permute(0, 2, 1, 3).reshape(B * C, T, d)
-
-        # Expand query for all samples: [B*C, 1, d]
-        query = self.query.expand(B * C, 1, d)
-
-        # Cross-attention: query attends to all timesteps
-        attended, _ = self.attn(query, x_flat, x_flat)  # [B*C, 1, d]
-        attended = self.attn_norm(query + attended)      # Residual connection
-
-        # Reshape back to [B, C, d]
-        attended = attended.squeeze(1).reshape(B, C, d)
-
-        # Predict future timesteps
-        return self.head(attended)  # [B, C, n_future]
-
-
 class NeuralForecaster(nn.Module):
     """
-    Complete neural forecasting model with:
-    - Feature encoding
-    - Sinusoidal positional encoding
-    - Factorized spatiotemporal blocks
-    - Prediction head
-    - Iterative refinement
+    Neural forecasting model with autoregressive decoding.
+
+    Architecture:
+    - Feature encoding (separate target signal and frequency band pathways)
+    - Sinusoidal temporal positional encoding + learnable channel embeddings
+    - Factorized spatiotemporal transformer blocks (causal temporal attention)
+    - Per-position step predictor (predicts next timestep from each position)
+    - Per-channel output scaling
+
+    Training uses teacher forcing: the full sequence (observed + ground truth future)
+    is encoded in one pass with causal masking, and each position predicts the next step.
+
+    Inference uses autoregressive decoding: predict one step at a time, feed the
+    prediction back as input for the next step.
     """
     def __init__(
         self,
@@ -199,7 +153,6 @@ class NeuralForecaster(nn.Module):
         n_heads=4,
         n_layers=3,
         n_future=10,
-        n_refinement_iters=2,
         dropout=0.15
     ):
         super().__init__()
@@ -207,7 +160,6 @@ class NeuralForecaster(nn.Module):
         self.n_features = n_features
         self.d_model = d_model
         self.n_future = n_future
-        self.n_refinement_iters = n_refinement_iters
 
         self.feature_encoder = FeatureEncoder(n_features, 32, d_model)
         self.pos_encoding = SinusoidalPositionalEncoding(d_model)
@@ -226,7 +178,15 @@ class NeuralForecaster(nn.Module):
             FactorizedSpatiotemporalBlock(d_model, n_heads, dropout)
             for _ in range(n_layers)
         ])
-        self.pred_head = PredictionHead(d_model, n_future, dropout=dropout)
+
+        # Step predictor: predicts next timestep's target signal from each
+        # position's encoding. Each position predicts the value at the NEXT
+        # timestep, enabling autoregressive decoding at inference time.
+        self.step_predictor = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, 1),
+        )
 
         # Per-channel output scaling — lets easy channels be handled trivially
         # while the model focuses capacity on harder patterns.
@@ -269,64 +229,84 @@ class NeuralForecaster(nn.Module):
             z = block(z, temporal_mask=temporal_mask)
         return z
 
-    def forward(self, x, use_refinement=True, return_aux=False):
+    def forward(self, x, y=None, return_aux=False):
         """
-        Forward pass with optional iterative refinement.
+        Forward pass with teacher forcing (training) or autoregressive decoding (inference).
 
         Args:
-            x: Input tensor of shape [B, T, C, F] where T=10 (observed timesteps)
-            use_refinement: Whether to use iterative refinement
+            x: Input tensor of shape [B, T_obs, C, F] where T_obs=10 (observed timesteps)
+            y: Ground truth future of shape [B, T_fut, C, F] (teacher forcing). If None,
+               uses autoregressive decoding (for validation/test).
             return_aux: Whether to return auxiliary predictions for frequency bands
 
         Returns:
             If return_aux=False: pred of shape [B, n_future, C] (feature[0] only)
             If return_aux=True: (pred, pred_aux) where pred_aux is [B, n_future, C, 8]
         """
-        B, T, C, F = x.shape
+        B, T_obs, C, F = x.shape
 
-        # Initial encoding and prediction
-        encoded = self.encode(x)
-        pred = self.pred_head(encoded).permute(0, 2, 1)  # [B, 10, C]
-        pred = pred * self.channel_scale + self.channel_bias
+        if y is not None:
+            # === Teacher Forcing ===
+            # Encode full sequence (observed + ground truth) in one pass with
+            # causal masking. Each position predicts the next timestep.
+            full_seq = torch.cat([x, y], dim=1)  # [B, T_obs + T_fut, C, F]
+            encoded = self.encode(full_seq, causal=True)
 
-        # Auxiliary prediction (frequency bands)
-        pred_aux = None
-        if return_aux:
-            # Use last timestep encoding for auxiliary prediction
-            last_encoded = encoded[:, -1, :, :]  # [B, C, d]
-            aux_flat = self.aux_pred_head(last_encoded)  # [B, C, n_future * 8]
-            pred_aux = aux_flat.view(B, C, self.n_future, self.n_aux_features)
-            pred_aux = pred_aux.permute(0, 2, 1, 3)  # [B, n_future, C, 8]
+            # Positions T_obs-1 through T_obs+n_future-2 predict steps 1..n_future
+            # (each position predicts the NEXT timestep's target signal)
+            pred_positions = encoded[:, T_obs - 1:T_obs + self.n_future - 1, :, :]  # [B, n_future, C, d]
+            pred = self.step_predictor(pred_positions).squeeze(-1)  # [B, n_future, C]
+            pred = pred * self.channel_scale + self.channel_bias
 
-        if use_refinement and self.n_refinement_iters > 0:
-            for _ in range(self.n_refinement_iters):
-                # Create predicted features tensor
-                # Use last observed auxiliary features instead of zeros to avoid
-                # distribution shift (model was trained on normalized data with
-                # non-zero auxiliary features)
-                pred_features = x[:, -1:, :, :].expand(-1, self.n_future, -1, -1).clone()
-                pred_features[:, :, :, 0] = pred  # Replace feature[0] with predictions
+            # Auxiliary prediction from the last observed position's encoding
+            pred_aux = None
+            if return_aux:
+                last_encoded = encoded[:, T_obs - 1, :, :]  # [B, C, d]
+                aux_flat = self.aux_pred_head(last_encoded)  # [B, C, n_future * 8]
+                pred_aux = aux_flat.view(B, C, self.n_future, self.n_aux_features)
+                pred_aux = pred_aux.permute(0, 2, 1, 3)  # [B, n_future, C, 8]
+                return pred, pred_aux
+            return pred
 
-                # Concatenate observed and predicted sequences
-                full_seq = torch.cat([x, pred_features], dim=1)  # [B, 20, C, F]
+        else:
+            # === Autoregressive Decoding ===
+            # Predict one step at a time, feeding prediction back as input.
+            current_seq = x  # [B, T_obs, C, F]
+            preds = []
+            first_encoded = None  # Cache for aux prediction
 
-                # Re-encode the full sequence
-                full_encoded = self.encode(full_seq)
+            for step in range(self.n_future):
+                encoded = self.encode(current_seq, causal=True)
+                if step == 0:
+                    first_encoded = encoded  # Save for aux head
+                last_enc = encoded[:, -1:, :, :]  # [B, 1, C, d]
+                step_pred = self.step_predictor(last_enc).squeeze(-1)  # [B, 1, C]
+                step_pred = step_pred * self.channel_scale + self.channel_bias
+                preds.append(step_pred.squeeze(1))  # [B, C]
 
-                # Extract encoding for future timesteps and predict
-                future_encoded = full_encoded[:, T:, :, :]  # [B, 10, C, d]
-                pred = self.pred_head(future_encoded.mean(dim=1)).permute(0, 2, 1)
-                pred = pred * self.channel_scale + self.channel_bias
+                # Build next input: copy last observed features, replace feature[0]
+                # with prediction. Keeps frequency bands from the last timestep to
+                # avoid distribution shift.
+                next_input = current_seq[:, -1:, :, :].clone()  # [B, 1, C, F]
+                next_input[:, 0, :, 0] = step_pred.squeeze(1)
+                current_seq = torch.cat([current_seq, next_input], dim=1)
 
-        if return_aux:
-            return pred, pred_aux
-        return pred
+            pred = torch.stack(preds, dim=1)  # [B, n_future, C]
+
+            pred_aux = None
+            if return_aux:
+                last_encoded = first_encoded[:, T_obs - 1, :, :]  # [B, C, d]
+                aux_flat = self.aux_pred_head(last_encoded)
+                pred_aux = aux_flat.view(B, C, self.n_future, self.n_aux_features)
+                pred_aux = pred_aux.permute(0, 2, 1, 3)
+                return pred, pred_aux
+            return pred
 
     def predict(self, x):
-        """Inference method - same as forward but always uses refinement."""
+        """Inference method - uses autoregressive decoding (no teacher forcing)."""
         self.eval()
         with torch.no_grad():
-            return self.forward(x, use_refinement=True)
+            return self.forward(x)  # y=None triggers autoregressive
 
 
 def get_model_for_monkey(monkey_name, n_channels=None, **kwargs):
