@@ -249,6 +249,13 @@ class NeuralForecaster(nn.Module):
             # === Teacher Forcing ===
             # Encode full sequence (observed + ground truth) in one pass with
             # causal masking. Each position predicts the next timestep.
+            # During training, inject noise into future targets' feature[0] to
+            # simulate the imperfect predictions seen during autoregressive
+            # inference. This reduces the train/inference gap.
+            if self.training:
+                y = y.clone()
+                noise = torch.randn_like(y[:, :, :, 0]) * 0.2
+                y[:, :, :, 0] = y[:, :, :, 0] + noise
             full_seq = torch.cat([x, y], dim=1)  # [B, T_obs + T_fut, C, F]
             encoded = self.encode(full_seq, causal=True)
 

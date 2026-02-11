@@ -514,7 +514,9 @@ def train_and_evaluate(
                 y_main = y[:, :, :, 0]
                 y_aux = y[:, :, :, 1:]
 
-                pred, pred_aux = model(x, return_aux=True)
+                # Use teacher forcing for validation (fast) — no noise since
+                # model is in eval mode. Autoregressive eval happens at test time.
+                pred, pred_aux = model(x, y=y, return_aux=True)
                 val_loss += criterion(pred, y_main, pred_aux, y_aux).item()
                 val_mse += mse_fn(pred, y_main).item()
 
