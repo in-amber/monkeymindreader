@@ -65,6 +65,7 @@ TRAINING_MODES = {
         'batch_size': {'beignet': 16, 'affi': 8},
         'patience': 15,
         'dropout': 0.15,
+        'n_refinement_iters': 0,
     },
     'mega': {
         # For high-performance PC with 32GB RAM, NVIDIA GPU, unlimited time
@@ -77,6 +78,7 @@ TRAINING_MODES = {
         'patience': 50,
         'min_epochs': 30,
         'dropout': 0.2,
+        'n_refinement_iters': 1,
     },
 }
 
@@ -393,6 +395,8 @@ def train_and_evaluate(
     patience = config['patience']
     min_epochs = config.get('min_epochs', 0)
     dropout = config['dropout']
+    n_refinement_iters = config['n_refinement_iters']
+
     if device is None:
         if torch.cuda.is_available():
             device = torch.device('cuda')
@@ -429,6 +433,7 @@ def train_and_evaluate(
         d_model=d_model,
         n_heads=n_heads,
         n_layers=n_layers,
+        n_refinement_iters=n_refinement_iters,
         dropout=dropout
     ).to(device)
 
@@ -480,7 +485,7 @@ def train_and_evaluate(
             y_aux = y[:, :, :, 1:]  # [B, T, C, 8]
 
             optimizer.zero_grad()
-            pred, pred_aux = model(x, y=y, return_aux=True)
+            pred, pred_aux = model(x, use_refinement=False, return_aux=True)
             loss, components = criterion(
                 pred, y_main, pred_aux, y_aux, return_components=True
             )
@@ -514,9 +519,7 @@ def train_and_evaluate(
                 y_main = y[:, :, :, 0]
                 y_aux = y[:, :, :, 1:]
 
-                # Use teacher forcing for validation (fast) — no noise since
-                # model is in eval mode. Autoregressive eval happens at test time.
-                pred, pred_aux = model(x, y=y, return_aux=True)
+                pred, pred_aux = model(x, use_refinement=False, return_aux=True)
                 val_loss += criterion(pred, y_main, pred_aux, y_aux).item()
                 val_mse += mse_fn(pred, y_main).item()
 
@@ -591,7 +594,7 @@ def train_and_evaluate(
             mean, std = mean.to(device), std.to(device)
             y_main = y[:, :, :, 0]  # Only feature 0 for test MSE
 
-            pred = model(x, return_aux=False)
+            pred = model(x, use_refinement=False, return_aux=False)
             test_mse += mse_fn(pred, y_main).item()
 
             # Denormalize to original units
@@ -646,6 +649,7 @@ def train_and_evaluate(
             'd_model': d_model,
             'n_heads': n_heads,
             'n_layers': n_layers,
+            'n_refinement_iters': n_refinement_iters,
             'dropout': dropout,
         },
         'test_mse': test_mse,
