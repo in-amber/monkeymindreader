@@ -227,7 +227,7 @@ def create_dataloaders(
     val_split=0.1,
     use_augmentation=True,
     num_workers=0,
-    seed=42
+    seed=7
 ):
     """
     Create train, validation, and test dataloaders for a monkey.

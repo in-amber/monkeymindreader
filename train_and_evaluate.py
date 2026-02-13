@@ -75,20 +75,24 @@ TRAINING_MODES = {
         'learning_rate': 3e-4,
         'n_epochs': 200,
         'batch_size': {'beignet': 64, 'affi': 16},
+        'effective_batch_size': 64,  # Gradient accumulation target
         'patience': 50,
         'min_epochs': 30,
         'dropout': 0.2,
         'n_refinement_iters': 1,
+        'aux_weight': 0.0,  # Disabled — empirically not helping
+        'timestep_weight_max': 2.0,  # Linear ramp from 1.0 to this for later timesteps
     },
 }
 
 
 class ForecastingLoss(nn.Module):
-    def __init__(self, smoothness_weight=0.0, aux_weight=0.01):
+    def __init__(self, smoothness_weight=0.0, aux_weight=0.01, timestep_weight_max=1.0):
         super().__init__()
         self.smoothness_weight = smoothness_weight
         self.aux_weight = aux_weight
-        self.main_loss_fn = nn.HuberLoss(delta=1.0)
+        self.timestep_weight_max = timestep_weight_max
+        self.huber = nn.HuberLoss(delta=1.0, reduction='none')
         self.mse = nn.MSELoss()
 
     def forward(self, pred, target_main, pred_aux=None, target_aux=None,
@@ -103,8 +107,17 @@ class ForecastingLoss(nn.Module):
             target_aux: Auxiliary targets [B, T, C, 8] for frequency bands (optional)
             return_components: If True, also return dict of individual loss components
         """
-        # Main prediction loss (Huber for robust training, MSE for tracking)
-        main_loss = self.main_loss_fn(pred, target_main)
+        # Per-element Huber loss
+        elementwise_loss = self.huber(pred, target_main)  # [B, T, C]
+
+        # Apply per-timestep weighting (linear ramp from 1.0 to timestep_weight_max)
+        if self.timestep_weight_max > 1.0:
+            T = pred.size(1)
+            weights = torch.linspace(1.0, self.timestep_weight_max, T, device=pred.device)
+            weights = weights / weights.mean()  # Normalize so total loss scale is preserved
+            elementwise_loss = elementwise_loss * weights[None, :, None]
+
+        main_loss = elementwise_loss.mean()
         total_loss = main_loss
 
         # Smoothness regularization
@@ -161,7 +174,12 @@ def save_experiment_log(
         'monkey': monkey_name,
         'mode': mode,
         'config': {k: v for k, v in config.items()},
-        'loss_config': {'smoothness_weight': 0.0, 'aux_weight': 0.01, 'main_loss': 'huber', 'huber_delta': 1.0},
+        'loss_config': {
+            'smoothness_weight': 0.0,
+            'aux_weight': config.get('aux_weight', 0.01),
+            'main_loss': 'huber', 'huber_delta': 1.0,
+            'timestep_weight_max': config.get('timestep_weight_max', 1.0),
+        },
         'device': str(device),
         'dataset': {
             'n_train': n_train,
@@ -396,6 +414,14 @@ def train_and_evaluate(
     min_epochs = config.get('min_epochs', 0)
     dropout = config['dropout']
     n_refinement_iters = config['n_refinement_iters']
+    aux_weight = config.get('aux_weight', 0.01)
+    timestep_weight_max = config.get('timestep_weight_max', 1.0)
+
+    # Gradient accumulation: if effective_batch_size > batch_size, accumulate
+    effective_batch_size = config.get('effective_batch_size', batch_size)
+    accumulation_steps = max(1, effective_batch_size // batch_size)
+    if accumulation_steps > 1:
+        print(f"Gradient accumulation: {accumulation_steps} steps (effective batch {effective_batch_size})", flush=True)
 
     if device is None:
         if torch.cuda.is_available():
@@ -449,9 +475,12 @@ def train_and_evaluate(
 
     # Setup training
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
-    total_steps = n_epochs * len(train_loader)
+    total_steps = n_epochs * (len(train_loader) // accumulation_steps)
     scheduler = get_lr_scheduler(optimizer, total_steps)
-    criterion = ForecastingLoss(smoothness_weight=0.0, aux_weight=0.01)
+    criterion = ForecastingLoss(
+        smoothness_weight=0.0, aux_weight=aux_weight,
+        timestep_weight_max=timestep_weight_max,
+    )
 
     # Training history (per-epoch)
     history = {
@@ -478,32 +507,45 @@ def train_and_evaluate(
         epoch_smooth = 0.0
         epoch_aux = 0.0
         epoch_grad_norm = 0.0
-        for x, y, mean, std in train_loader:
+        optimizer.zero_grad()
+        for batch_idx, (x, y, mean, std) in enumerate(train_loader):
             x, y = x.to(device), y.to(device)
             # Split target: y is [B, T, C, F], we need main (feature 0) and aux (features 1-8)
             y_main = y[:, :, :, 0]  # [B, T, C]
             y_aux = y[:, :, :, 1:]  # [B, T, C, 8]
 
-            optimizer.zero_grad()
-            pred, pred_aux = model(x, use_refinement=False, return_aux=True)
+            use_aux = aux_weight > 0
+            if use_aux:
+                pred, pred_aux = model(x, use_refinement=False, return_aux=True)
+            else:
+                pred = model(x, use_refinement=False, return_aux=False)
+                pred_aux = None
             loss, components = criterion(
-                pred, y_main, pred_aux, y_aux, return_components=True
+                pred, y_main, pred_aux if use_aux else None,
+                y_aux if use_aux else None, return_components=True
             )
-            loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-            scheduler.step()
+            # Scale loss for gradient accumulation
+            (loss / accumulation_steps).backward()
+
             train_loss += loss.item()
             epoch_main += components['main']
             epoch_smooth += components['smoothness']
             epoch_aux += components['aux']
-            epoch_grad_norm += grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm
+
+            # Step optimizer every accumulation_steps batches (or at end of epoch)
+            if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(train_loader):
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+                epoch_grad_norm += grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm
         n_batches = len(train_loader)
+        n_opt_steps = max(1, n_batches // accumulation_steps)
         train_loss /= n_batches
         epoch_main /= n_batches
         epoch_smooth /= n_batches
         epoch_aux /= n_batches
-        epoch_grad_norm /= n_batches
+        epoch_grad_norm /= n_opt_steps
 
         # Validation
         model.eval()
@@ -519,8 +561,12 @@ def train_and_evaluate(
                 y_main = y[:, :, :, 0]
                 y_aux = y[:, :, :, 1:]
 
-                pred, pred_aux = model(x, use_refinement=False, return_aux=True)
-                val_loss += criterion(pred, y_main, pred_aux, y_aux).item()
+                if use_aux:
+                    pred, pred_aux = model(x, use_refinement=False, return_aux=True)
+                    val_loss += criterion(pred, y_main, pred_aux, y_aux).item()
+                else:
+                    pred = model(x, use_refinement=False, return_aux=False)
+                    val_loss += criterion(pred, y_main).item()
                 val_mse += mse_fn(pred, y_main).item()
 
                 # MSE in original units (what the challenge grades on)
