@@ -82,6 +82,8 @@ TRAINING_MODES = {
         'n_refinement_iters': 1,
         'aux_weight': 0.0,  # Disabled — empirically not helping
         'timestep_weight_max': 2.0,  # Linear ramp from 1.0 to this for later timesteps
+        'use_dual_heads': True,
+        'use_temporal_conv': True,
     },
 }
 
@@ -453,6 +455,8 @@ def train_and_evaluate(
     print(f"Channels: {n_channels}", flush=True)
 
     # Create model
+    use_dual_heads = config.get('use_dual_heads', False)
+    use_temporal_conv = config.get('use_temporal_conv', False)
     model = get_model_for_monkey(
         monkey_name,
         n_channels=n_channels,
@@ -460,7 +464,9 @@ def train_and_evaluate(
         n_heads=n_heads,
         n_layers=n_layers,
         n_refinement_iters=n_refinement_iters,
-        dropout=dropout
+        dropout=dropout,
+        use_dual_heads=use_dual_heads,
+        use_temporal_conv=use_temporal_conv,
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)

@@ -80,15 +80,31 @@ class FactorizedSpatiotemporalBlock(nn.Module):
     """
     Core computational unit with factorized attention:
     - Temporal self-attention (within each electrode)
+    - Optional temporal convolution (local pattern extraction, parallel with attention)
     - Spatial self-attention (across electrodes)
     - Feed-forward network with residual connections
     """
-    def __init__(self, d_model, n_heads, dropout=0.1, ff_mult=4):
+    def __init__(self, d_model, n_heads, dropout=0.1, ff_mult=4, use_temporal_conv=False):
         super().__init__()
+        self.use_temporal_conv = use_temporal_conv
+
         # Temporal attention (within each electrode)
         self.temporal_attn = nn.MultiheadAttention(
             d_model, n_heads, dropout=dropout, batch_first=True)
         self.temporal_norm = nn.LayerNorm(d_model)
+
+        # Optional temporal convolution (parallel with attention)
+        if use_temporal_conv:
+            self.temporal_conv = nn.Sequential(
+                # Depthwise conv for local temporal patterns
+                nn.Conv1d(d_model, d_model, kernel_size=3, padding=1, groups=d_model),
+                nn.GELU(),
+                # Pointwise conv to mix features
+                nn.Conv1d(d_model, d_model, kernel_size=1),
+                nn.Dropout(dropout),
+            )
+            # Learnable blend between attention and conv (starts at 0.5)
+            self.conv_gate = nn.Parameter(torch.tensor(0.0))
 
         # Spatial attention (across electrodes)
         self.spatial_attn = nn.MultiheadAttention(
@@ -113,7 +129,18 @@ class FactorizedSpatiotemporalBlock(nn.Module):
         # Reshape to [B*C, T, d] - each electrode attends to its own history
         x_t = x.permute(0, 2, 1, 3).reshape(B * C, T, d)
         attn_out, _ = self.temporal_attn(x_t, x_t, x_t, attn_mask=temporal_mask)
-        x_t = self.temporal_norm(x_t + self.dropout(attn_out))
+        attn_out = self.dropout(attn_out)
+
+        if self.use_temporal_conv:
+            # Conv operates on [B*C, d, T] (channels-first for Conv1d)
+            conv_out = self.temporal_conv(x_t.transpose(1, 2)).transpose(1, 2)  # [B*C, T, d]
+            # Blend attention and conv outputs via learned gate
+            gate = torch.sigmoid(self.conv_gate)
+            combined = (1 - gate) * attn_out + gate * conv_out
+            x_t = self.temporal_norm(x_t + combined)
+        else:
+            x_t = self.temporal_norm(x_t + attn_out)
+
         x = x_t.reshape(B, C, T, d).permute(0, 2, 1, 3)
 
         # === Spatial Attention ===
@@ -187,8 +214,8 @@ class NeuralForecaster(nn.Module):
     Complete neural forecasting model with:
     - Feature encoding
     - Sinusoidal positional encoding
-    - Factorized spatiotemporal blocks
-    - Prediction head
+    - Factorized spatiotemporal blocks (with optional temporal conv)
+    - Dual near/far prediction heads (optional)
     - Iterative refinement
     """
     def __init__(
@@ -200,7 +227,9 @@ class NeuralForecaster(nn.Module):
         n_layers=3,
         n_future=10,
         n_refinement_iters=2,
-        dropout=0.15
+        dropout=0.15,
+        use_dual_heads=False,
+        use_temporal_conv=False,
     ):
         super().__init__()
         self.n_channels = n_channels
@@ -208,6 +237,7 @@ class NeuralForecaster(nn.Module):
         self.d_model = d_model
         self.n_future = n_future
         self.n_refinement_iters = n_refinement_iters
+        self.use_dual_heads = use_dual_heads
 
         self.feature_encoder = FeatureEncoder(n_features, 32, d_model)
         self.pos_encoding = SinusoidalPositionalEncoding(d_model)
@@ -229,10 +259,19 @@ class NeuralForecaster(nn.Module):
         self.channel_bias = nn.Parameter(torch.zeros(1, 1, n_channels))
 
         self.blocks = nn.ModuleList([
-            FactorizedSpatiotemporalBlock(d_model, n_heads, dropout)
+            FactorizedSpatiotemporalBlock(d_model, n_heads, dropout,
+                                         use_temporal_conv=use_temporal_conv)
             for _ in range(n_layers)
         ])
-        self.pred_head = PredictionHead(d_model, n_future, dropout=dropout)
+
+        if use_dual_heads:
+            # Two specialized prediction heads blended by a learned gate
+            self.near_head = PredictionHead(d_model, n_future, dropout=dropout)
+            self.far_head = PredictionHead(d_model, n_future, dropout=dropout)
+            # Gate initialized so near_head dominates early steps, far_head later
+            self.head_gate = nn.Parameter(torch.linspace(-1.0, 1.0, n_future))
+        else:
+            self.pred_head = PredictionHead(d_model, n_future, dropout=dropout)
 
         # Auxiliary head for predicting frequency bands (features 1-8)
         # Uses simpler MLP since auxiliary task is secondary
@@ -268,6 +307,23 @@ class NeuralForecaster(nn.Module):
             z = block(z, temporal_mask=temporal_mask)
         return z
 
+    def _apply_pred_head(self, encoded):
+        """Apply prediction head(s) to encoded representation.
+
+        Args:
+            encoded: [B, T, C, d] or [B, C, d] (for refinement mean-pooled case)
+
+        Returns:
+            pred: [B, C, n_future] (before permute)
+        """
+        if self.use_dual_heads:
+            near_pred = self.near_head(encoded)  # [B, C, n_future]
+            far_pred = self.far_head(encoded)    # [B, C, n_future]
+            gate = torch.sigmoid(self.head_gate)  # [n_future]
+            return (1 - gate) * near_pred + gate * far_pred
+        else:
+            return self.pred_head(encoded)
+
     def forward(self, x, use_refinement=True, return_aux=False):
         """
         Forward pass with optional iterative refinement.
@@ -285,7 +341,7 @@ class NeuralForecaster(nn.Module):
 
         # Initial encoding and prediction
         encoded = self.encode(x)
-        pred = self.pred_head(encoded).permute(0, 2, 1)  # [B, 10, C]
+        pred = self._apply_pred_head(encoded).permute(0, 2, 1)  # [B, 10, C]
         pred = pred * self.channel_scale + self.channel_bias
 
         # Auxiliary prediction (frequency bands)
@@ -314,7 +370,7 @@ class NeuralForecaster(nn.Module):
 
                 # Extract encoding for future timesteps and predict
                 future_encoded = full_encoded[:, T:, :, :]  # [B, 10, C, d]
-                pred = self.pred_head(future_encoded.mean(dim=1)).permute(0, 2, 1)
+                pred = self._apply_pred_head(future_encoded.mean(dim=1)).permute(0, 2, 1)
                 pred = pred * self.channel_scale + self.channel_bias
 
         if return_aux:
