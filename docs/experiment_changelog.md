@@ -4,10 +4,11 @@ Running log of model changes, experiments, and results. MSE values are normalize
 (per-sample normalization). Original-units MSE shown in parentheses where relevant.
 
 ## Current Active Configuration
-- **Architecture**: Factorized spatiotemporal encoder + parallel attention-based PredictionHead
-- **Loss**: Huber (delta=1.0) for training, MSE for validation/early stopping
-- **Loss weights**: smoothness=0.0, aux=0.01
+- **Architecture**: Factorized spatiotemporal encoder + dual near/far PredictionHeads + temporal conv
+- **Loss**: Huber (delta=1.0) with timestep weighting (1.0→2.0 ramp), MSE for validation/early stopping
+- **Loss weights**: smoothness=0.0, aux=0.0 (disabled)
 - **Early stopping**: patience=50, min_epochs=30 (mega mode)
+- **Training**: Gradient accumulation for Affi (effective batch 64 from 4x16)
 - **Refinement**: n_refinement_iters=1 in mega config, but use_refinement=False in all code paths
 
 ---
@@ -73,6 +74,58 @@ autoregressive errors. Switched validation to teacher forcing for speed.
 to address the fundamental train/inference gap. Teacher forcing validation broke the
 early stopping signal. Error accumulation worsened (t10/t1 ratio: 9.3x).
 
+## Round 6 — Revert to R2 architecture, re-add channel embeddings/scaling (commit 9156936)
+Reverted autoregressive changes. Re-added channel embeddings and per-channel output
+scaling from R3, along with the early stopping fix. Changed dataset seed to 7.
+
+| Monkey | Val MSE | Test MSE | Test MSE (orig) | vs R2 |
+|--------|---------|----------|-----------------|-------|
+| Beignet | 0.536 | 0.700 | 74,755 | -1.8% orig |
+| Affi | 1.491 | 1.606 | 56,842 | +2.5% orig |
+
+**Verdict**: Kept as new baseline. Clean architecture with channel embeddings
+providing slight benefit. This is the starting point for the Phase 1-4 improvement plan.
+
+## Round 7 — Phase 1: Grad accumulation, timestep weights, drop aux (commit d73cc2e) [KEPT]
+Three quick wins applied together:
+1. **Gradient accumulation** for Affi: effective batch 64 from 4x16 mini-batches
+2. **Timestep-weighted loss**: linear ramp 1.0→2.0 across future steps, normalized
+3. **Disabled auxiliary loss**: aux_weight=0.0 (was 0.01, empirically not helping)
+
+| Monkey | Val MSE | Test MSE | Test MSE (orig) | vs R6 |
+|--------|---------|----------|-----------------|-------|
+| Beignet | 0.536 | 0.837 | 74,437 | -0.4% orig |
+| Affi | 1.491 | **1.368** | **50,966** | **-10.3% orig** |
+
+Per-timestep detail (Affi): t4-t8 all improved 7-19%. Best epoch 29 vs 14 (trained 2x longer).
+Per-channel variance (Affi): std 51,077 → 25,341 (-50%), worst channel 763K → 178K (-77%).
+
+**Verdict**: Kept. Major Affi improvement from gradient accumulation stabilizing training.
+Beignet flat (expected — already had batch_size=64). Timestep weights showed clear effect
+on Affi's per-timestep profile but minimal overall impact on Beignet.
+
+## Round 8a — Phase 2: Dual heads + temporal conv + per-channel norm (commit a8b115b) [PARTIALLY REVERTED]
+Three changes tested together:
+1. **Dual near/far prediction heads**: two PredictionHead instances blended by learned sigmoid gate
+2. **Temporal convolution**: depthwise-separable Conv1d (kernel=3) parallel to attention, learned gate blend
+3. **Per-channel normalization**: each channel gets own mean/std from T=10 observed steps
+
+| Monkey | Val MSE | Test MSE | Test MSE (orig) | vs R7 |
+|--------|---------|----------|-----------------|-------|
+| Beignet | 3.013 | 3.233 | 71,168 | -4.4% orig |
+
+**Verdict**: Per-channel normalization reverted. Normalized MSE appeared 4x worse due to
+changed normalization scale, while original MSE actually improved slightly. However, training
+was severely destabilized — noisy val curves, gradient spikes. With only T=10 observed steps,
+per-channel std estimates are too noisy for stable training. Dual heads and temporal conv
+retained for clean re-test without the normalization change.
+
+## Round 8b — Phase 2: Dual heads + temporal conv only (commit b503536) [PENDING]
+Same architectural changes as R8a but with global normalization restored. Testing whether
+the dual heads and temporal conv help independently of the normalization change.
+
+*(Results pending)*
+
 ---
 
 ## Key Learnings
@@ -84,3 +137,9 @@ early stopping signal. Error accumulation worsened (t10/t1 ratio: 9.3x).
    errors make it unsuitable without more sophisticated error correction. The 12x training
    slowdown makes experimentation impractical.
 6. **Teacher forcing for validation** produces misleading val MSE — don't use it for early stopping
+7. **Gradient accumulation** is critical for Affi — batch_size=16 is too noisy, effective batch 64
+   stabilizes training and allows the model to train 2x longer before early stop
+8. **Per-channel normalization** with T=10 is too noisy — std from 10 timesteps destabilizes
+   training. Don't retry without significantly more observed steps or precomputed dataset statistics
+9. **Auxiliary loss** (freq band prediction) provides no measurable benefit after 5+ rounds at
+   various weights (0.1, 0.01). Safe to disable entirely.
