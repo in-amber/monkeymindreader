@@ -12,65 +12,66 @@ from torch.utils.data import Dataset, DataLoader
 
 class PerSampleNormalizer:
     """
-    Per-sample, per-channel normalization for handling session drift.
+    Per-sample normalization for handling session drift.
     Critical for cross-session generalization where signal magnitude may change.
-
-    Each channel is normalized independently so that high-amplitude channels
-    don't dominate the statistics of low-amplitude ones.
 
     Statistics are computed from observed timesteps only, so normalization
     is identical during training and challenge inference (where future
     timesteps are unavailable).
     """
     @staticmethod
-    def normalize(x, observed_steps=None, eps=1e-8, min_std=0.1):
+    def normalize(x, observed_steps=None, eps=1e-8):
         """
-        Normalize each sample and channel independently using observed timesteps.
+        Normalize each sample independently using observed timesteps only.
 
         Args:
             x: Tensor of shape [B, T, C, F] or numpy array
             observed_steps: Number of observed timesteps to compute stats from.
                 If None, uses all timesteps (legacy behavior).
             eps: Small value for numerical stability
-            min_std: Minimum std threshold to prevent blow-up on near-constant channels
 
         Returns:
-            Normalized data [B, T, C, F], mean [B, 1, C, F], std [B, 1, C, F]
+            Normalized data, mean, std (for denormalization)
         """
         if isinstance(x, np.ndarray):
             x = torch.from_numpy(x).float()
 
         B, T, C, F = x.shape
 
-        # Compute statistics from observed portion only, per channel
+        # Compute statistics from observed portion only
         ref = x[:, :observed_steps] if observed_steps is not None else x
-        # ref: [B, T_obs, C, F] → mean/std over time dimension only
-        mean = ref.mean(dim=1, keepdim=True)  # [B, 1, C, F]
-        std = ref.std(dim=1, keepdim=True)    # [B, 1, C, F]
-        std = std.clamp(min=min_std) + eps    # Floor to prevent blow-up
+        ref_flat = ref.reshape(B, -1, F)
+        mean = ref_flat.mean(dim=1, keepdim=True)  # [B, 1, F]
+        std = ref_flat.std(dim=1, keepdim=True) + eps  # [B, 1, F]
 
-        x_norm = (x - mean) / std
-        return x_norm, mean, std
+        # Apply normalization to the full sequence
+        x_flat = x.reshape(B, T * C, F)
+        x_norm = (x_flat - mean) / std
+        return x_norm.reshape(B, T, C, F), mean, std
 
     @staticmethod
     def denormalize(x_norm, mean, std):
         """Reverse normalization.
 
         Args:
-            x_norm: Normalized tensor [B, T, C, F] or [B, T, C] (single feature)
-            mean: Per-sample per-channel mean from normalize() [B, 1, C, F]
-            std: Per-sample per-channel std from normalize() [B, 1, C, F]
+            x_norm: Normalized tensor of shape [B, T, C, F] or [B, T, C]
+            mean: Per-sample mean from normalize() [B, 1, F]
+            std: Per-sample std from normalize() [B, 1, F]
 
         Returns:
             Denormalized tensor in original units
         """
         if x_norm.dim() == 3:
             # [B, T, C] — single feature (e.g. target predictions)
-            # Use first feature's stats: mean[:, :, :, 0], std[:, :, :, 0]
-            m = mean[:, :, :, 0]  # [B, 1, C]
-            s = std[:, :, :, 0]   # [B, 1, C]
+            # Use first feature's stats: mean[:, :, 0], std[:, :, 0]
+            B, T, C = x_norm.shape
+            m = mean[:, :, 0:1]  # [B, 1, 1]
+            s = std[:, :, 0:1]   # [B, 1, 1]
             return x_norm * s + m
-        return x_norm * std + mean
+        B, T, C, F = x_norm.shape
+        x_flat = x_norm.reshape(B, -1, F)
+        x_denorm = x_flat * std + mean
+        return x_denorm.reshape(B, T, C, F)
 
 
 class NeuralDataAugmentation:
@@ -162,8 +163,8 @@ class NeuralForecastDataset(Dataset):
             sample, observed_steps=self.observed_steps
         )
         sample = sample.squeeze(0)  # [T, C, F]
-        mean = mean.squeeze(0)      # [1, C, F]
-        std = std.squeeze(0)        # [1, C, F]
+        mean = mean.squeeze(0)      # [1, F]
+        std = std.squeeze(0)        # [1, F]
 
         # Split into input and target
         x = sample[:self.observed_steps]  # [10, C, F]
