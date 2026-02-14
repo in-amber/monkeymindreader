@@ -120,11 +120,29 @@ was severely destabilized — noisy val curves, gradient spikes. With only T=10 
 per-channel std estimates are too noisy for stable training. Dual heads and temporal conv
 retained for clean re-test without the normalization change.
 
-## Round 8b — Phase 2: Dual heads + temporal conv only (commit b503536) [PENDING]
+## Round 8b — Phase 2: Dual heads + temporal conv only (commit b503536) [KEPT]
 Same architectural changes as R8a but with global normalization restored. Testing whether
 the dual heads and temporal conv help independently of the normalization change.
 
-*(Results pending)*
+| Monkey | Val MSE | Test MSE | Test MSE (orig) | vs R7 |
+|--------|---------|----------|-----------------|-------|
+| Beignet | 0.514 | 0.880 | 73,089 | -1.8% orig |
+| Affi | 1.583 | **1.444** | **49,396** | **-3.1% orig** |
+
+Beignet trained longer (best epoch 59 vs 34), suggesting the model is using the extra
+capacity well. Per-timestep profile shows mid-horizon (t4-t6) improvement (-3.7% to -6.0%)
+offset by early-step regression (t1: +15%). Per-channel variance increased (std 53K vs 36K).
+
+Affi improved cleanly — per-channel std also decreased (23,773 vs 25,341). Training curves
+smooth and stable for both monkeys.
+
+**Verdict**: Kept. Consistent improvement for both monkeys. Dual heads and temporal conv
+add genuine value without destabilizing training. Architecture locked in for Phase 3
+(hyperparameter search).
+
+**Cumulative progress vs R2 (pre-plan baseline):**
+- Beignet: 73,397 → 73,089 (-0.4%)
+- Affi: 55,452 → 49,396 (-10.9%)
 
 ---
 
@@ -143,3 +161,6 @@ the dual heads and temporal conv help independently of the normalization change.
    training. Don't retry without significantly more observed steps or precomputed dataset statistics
 9. **Auxiliary loss** (freq band prediction) provides no measurable benefit after 5+ rounds at
    various weights (0.1, 0.01). Safe to disable entirely.
+10. **Dual near/far heads + temporal conv** provide modest but consistent gains (-1.8% Beignet,
+    -3.1% Affi). The temporal conv's learned gate and dual head blending give the model more
+    flexibility without destabilizing training. Models also train longer before early stopping.
