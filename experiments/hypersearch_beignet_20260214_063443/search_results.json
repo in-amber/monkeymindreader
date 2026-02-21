@@ -1,0 +1,568 @@
+{
+  "monkey": "beignet",
+  "n_configs": 16,
+  "seed": 42,
+  "search_space": {
+    "learning_rate": [
+      "log_uniform",
+      0.0001,
+      0.001
+    ],
+    "weight_decay": [
+      "log_uniform",
+      0.005,
+      0.1
+    ],
+    "dropout": [
+      "uniform",
+      0.1,
+      0.3
+    ],
+    "d_model": [
+      "choice",
+      [
+        96,
+        128,
+        192
+      ]
+    ],
+    "n_layers": [
+      "choice",
+      [
+        3,
+        4,
+        5,
+        6
+      ]
+    ],
+    "huber_delta": [
+      "choice",
+      [
+        0.5,
+        1.0,
+        2.0
+      ]
+    ],
+    "timestep_weight_max": [
+      "uniform",
+      1.0,
+      3.0
+    ]
+  },
+  "rounds": [
+    {
+      "max_epochs": 30,
+      "keep_fraction": 0.5,
+      "early_stopping": false
+    },
+    {
+      "max_epochs": 60,
+      "keep_fraction": 0.5,
+      "early_stopping": false
+    },
+    {
+      "max_epochs": 120,
+      "keep_fraction": 0.5,
+      "early_stopping": false
+    },
+    {
+      "max_epochs": 200,
+      "keep_fraction": 1.0,
+      "early_stopping": true
+    }
+  ],
+  "total_time_seconds": 51345.1,
+  "best_config": {
+    "learning_rate": 0.00034592128827333365,
+    "weight_decay": 0.046865945210638145,
+    "dropout": 0.18568676545891594,
+    "d_model": 192,
+    "n_layers": 6,
+    "huber_delta": 1.0,
+    "timestep_weight_max": 1.4386415183145667
+  },
+  "best_val_mse": 0.5059055685997009,
+  "best_val_mse_orig": 68501.021484375,
+  "all_results": [
+    {
+      "config": {
+        "learning_rate": 0.00044466749640747783,
+        "weight_decay": 0.031007568657680916,
+        "dropout": 0.1342277296396194,
+        "d_model": 192,
+        "n_layers": 4,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 1.9245204237022315
+      },
+      "val_mse": 0.5330293327569962,
+      "val_mse_orig": 71836.58203125,
+      "epochs_run": 30,
+      "time": 1292.8,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.0009943461728031205,
+        "weight_decay": 0.023008006743332837,
+        "dropout": 0.11818188243475879,
+        "d_model": 96,
+        "n_layers": 3,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 2.25489208340618
+      },
+      "val_mse": 0.5367555022239685,
+      "val_mse_orig": 72442.04296875,
+      "epochs_run": 30,
+      "time": 81.1,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.0004359400788954502,
+        "weight_decay": 0.005389019400915858,
+        "dropout": 0.15500586367382385,
+        "d_model": 96,
+        "n_layers": 4,
+        "huber_delta": 2.0,
+        "timestep_weight_max": 1.204990352343015
+      },
+      "val_mse": 0.5487387627363205,
+      "val_mse_orig": 80781.9765625,
+      "epochs_run": 30,
+      "time": 105.0,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.00034592128827333365,
+        "weight_decay": 0.046865945210638145,
+        "dropout": 0.18568676545891594,
+        "d_model": 192,
+        "n_layers": 6,
+        "huber_delta": 1.0,
+        "timestep_weight_max": 1.4386415183145667
+      },
+      "val_mse": 0.5513578653335571,
+      "val_mse_orig": 77201.0859375,
+      "epochs_run": 30,
+      "time": 2724.1,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.0005503864642355312,
+        "weight_decay": 0.025615817672261013,
+        "dropout": 0.21809850248980794,
+        "d_model": 96,
+        "n_layers": 3,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 1.4372759496072067
+      },
+      "val_mse": 0.5563409626483917,
+      "val_mse_orig": 87259.57421875,
+      "epochs_run": 30,
+      "time": 81.7,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.00040153742663496394,
+        "weight_decay": 0.05611359563374485,
+        "dropout": 0.24594635733876358,
+        "d_model": 192,
+        "n_layers": 3,
+        "huber_delta": 1.0,
+        "timestep_weight_max": 1.1576003961569163
+      },
+      "val_mse": 0.561046227812767,
+      "val_mse_orig": 81211.10546875,
+      "epochs_run": 30,
+      "time": 517.5,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.00043219968325228355,
+        "weight_decay": 0.014915149560003968,
+        "dropout": 0.17403619342337653,
+        "d_model": 96,
+        "n_layers": 5,
+        "huber_delta": 2.0,
+        "timestep_weight_max": 2.873309175424988
+      },
+      "val_mse": 0.5642543733119965,
+      "val_mse_orig": 83394.3046875,
+      "epochs_run": 30,
+      "time": 129.0,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.0003201513136024105,
+        "weight_decay": 0.005413698892705595,
+        "dropout": 0.1397675301373297,
+        "d_model": 192,
+        "n_layers": 6,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 1.8984180925677072
+      },
+      "val_mse": 0.5694290101528168,
+      "val_mse_orig": 84466.90625,
+      "epochs_run": 30,
+      "time": 2755.3,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.0004584197485106983,
+        "weight_decay": 0.05067049003750325,
+        "dropout": 0.29704430413215155,
+        "d_model": 96,
+        "n_layers": 3,
+        "huber_delta": 1.0,
+        "timestep_weight_max": 1.5559472062201842
+      },
+      "val_mse": 0.5839836001396179,
+      "val_mse_orig": 91054.1796875,
+      "epochs_run": 30,
+      "time": 81.3,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.0003,
+        "weight_decay": 0.01,
+        "dropout": 0.2,
+        "d_model": 128,
+        "n_layers": 4,
+        "huber_delta": 1.0,
+        "timestep_weight_max": 2.0
+      },
+      "val_mse": 0.5847526490688324,
+      "val_mse_orig": 90525.41015625,
+      "epochs_run": 30,
+      "time": 196.8,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.00019641664176055319,
+        "weight_decay": 0.03287374938390516,
+        "dropout": 0.27709034958736134,
+        "d_model": 128,
+        "n_layers": 4,
+        "huber_delta": 2.0,
+        "timestep_weight_max": 1.1391102976474818
+      },
+      "val_mse": 0.6062860786914825,
+      "val_mse_orig": 102976.66796875,
+      "epochs_run": 30,
+      "time": 242.7,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.00024867487084937774,
+        "weight_decay": 0.07741477413835583,
+        "dropout": 0.19177037051747975,
+        "d_model": 128,
+        "n_layers": 4,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 2.489977964183213
+      },
+      "val_mse": 0.6088498532772064,
+      "val_mse_orig": 107019.4921875,
+      "epochs_run": 30,
+      "time": 235.3,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.00016417754684296297,
+        "weight_decay": 0.049237814484408456,
+        "dropout": 0.12044205530396974,
+        "d_model": 128,
+        "n_layers": 3,
+        "huber_delta": 1.0,
+        "timestep_weight_max": 2.6949887326949193
+      },
+      "val_mse": 0.6325280666351318,
+      "val_mse_orig": 115868.5546875,
+      "epochs_run": 30,
+      "time": 114.5,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.0001861863451484682,
+        "weight_decay": 0.07997084533085407,
+        "dropout": 0.23763239168666264,
+        "d_model": 96,
+        "n_layers": 5,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 1.4580961439282087
+      },
+      "val_mse": 0.6538548767566681,
+      "val_mse_orig": 128793.9375,
+      "epochs_run": 30,
+      "time": 128.1,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.00018975389892699228,
+        "weight_decay": 0.06760141662661306,
+        "dropout": 0.25176147342595345,
+        "d_model": 96,
+        "n_layers": 6,
+        "huber_delta": 1.0,
+        "timestep_weight_max": 1.5557426833432837
+      },
+      "val_mse": 0.6641993522644043,
+      "val_mse_orig": 125009.8515625,
+      "epochs_run": 30,
+      "time": 357.8,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.00010767137121367782,
+        "weight_decay": 0.012864232542816769,
+        "dropout": 0.15354817519514055,
+        "d_model": 96,
+        "n_layers": 5,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 2.31087733058976
+      },
+      "val_mse": 0.7416149377822876,
+      "val_mse_orig": 156298.9453125,
+      "epochs_run": 30,
+      "time": 128.6,
+      "round": 1
+    },
+    {
+      "config": {
+        "learning_rate": 0.0004359400788954502,
+        "weight_decay": 0.005389019400915858,
+        "dropout": 0.15500586367382385,
+        "d_model": 96,
+        "n_layers": 4,
+        "huber_delta": 2.0,
+        "timestep_weight_max": 1.204990352343015
+      },
+      "val_mse": 0.5130070596933365,
+      "val_mse_orig": 65417.88671875,
+      "epochs_run": 60,
+      "time": 209.9,
+      "round": 2
+    },
+    {
+      "config": {
+        "learning_rate": 0.0009943461728031205,
+        "weight_decay": 0.023008006743332837,
+        "dropout": 0.11818188243475879,
+        "d_model": 96,
+        "n_layers": 3,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 2.25489208340618
+      },
+      "val_mse": 0.5175847858190536,
+      "val_mse_orig": 70745.130859375,
+      "epochs_run": 60,
+      "time": 161.8,
+      "round": 2
+    },
+    {
+      "config": {
+        "learning_rate": 0.00044466749640747783,
+        "weight_decay": 0.031007568657680916,
+        "dropout": 0.1342277296396194,
+        "d_model": 192,
+        "n_layers": 4,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 1.9245204237022315
+      },
+      "val_mse": 0.5211488604545593,
+      "val_mse_orig": 68604.2109375,
+      "epochs_run": 60,
+      "time": 2544.2,
+      "round": 2
+    },
+    {
+      "config": {
+        "learning_rate": 0.00034592128827333365,
+        "weight_decay": 0.046865945210638145,
+        "dropout": 0.18568676545891594,
+        "d_model": 192,
+        "n_layers": 6,
+        "huber_delta": 1.0,
+        "timestep_weight_max": 1.4386415183145667
+      },
+      "val_mse": 0.5221095383167267,
+      "val_mse_orig": 69959.9453125,
+      "epochs_run": 60,
+      "time": 5397.7,
+      "round": 2
+    },
+    {
+      "config": {
+        "learning_rate": 0.00040153742663496394,
+        "weight_decay": 0.05611359563374485,
+        "dropout": 0.24594635733876358,
+        "d_model": 192,
+        "n_layers": 3,
+        "huber_delta": 1.0,
+        "timestep_weight_max": 1.1576003961569163
+      },
+      "val_mse": 0.5257743895053864,
+      "val_mse_orig": 69868.8046875,
+      "epochs_run": 60,
+      "time": 945.6,
+      "round": 2
+    },
+    {
+      "config": {
+        "learning_rate": 0.0005503864642355312,
+        "weight_decay": 0.025615817672261013,
+        "dropout": 0.21809850248980794,
+        "d_model": 96,
+        "n_layers": 3,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 1.4372759496072067
+      },
+      "val_mse": 0.5341228246688843,
+      "val_mse_orig": 68820.419921875,
+      "epochs_run": 60,
+      "time": 161.6,
+      "round": 2
+    },
+    {
+      "config": {
+        "learning_rate": 0.0003201513136024105,
+        "weight_decay": 0.005413698892705595,
+        "dropout": 0.1397675301373297,
+        "d_model": 192,
+        "n_layers": 6,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 1.8984180925677072
+      },
+      "val_mse": 0.5359158962965012,
+      "val_mse_orig": 72627.9921875,
+      "epochs_run": 60,
+      "time": 5387.6,
+      "round": 2
+    },
+    {
+      "config": {
+        "learning_rate": 0.00043219968325228355,
+        "weight_decay": 0.014915149560003968,
+        "dropout": 0.17403619342337653,
+        "d_model": 96,
+        "n_layers": 5,
+        "huber_delta": 2.0,
+        "timestep_weight_max": 2.873309175424988
+      },
+      "val_mse": 0.5430595129728317,
+      "val_mse_orig": 71438.533203125,
+      "epochs_run": 60,
+      "time": 256.7,
+      "round": 2
+    },
+    {
+      "config": {
+        "learning_rate": 0.00034592128827333365,
+        "weight_decay": 0.046865945210638145,
+        "dropout": 0.18568676545891594,
+        "d_model": 192,
+        "n_layers": 6,
+        "huber_delta": 1.0,
+        "timestep_weight_max": 1.4386415183145667
+      },
+      "val_mse": 0.5063092708587646,
+      "val_mse_orig": 72164.875,
+      "epochs_run": 120,
+      "time": 10801.0,
+      "round": 3
+    },
+    {
+      "config": {
+        "learning_rate": 0.00044466749640747783,
+        "weight_decay": 0.031007568657680916,
+        "dropout": 0.1342277296396194,
+        "d_model": 192,
+        "n_layers": 4,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 1.9245204237022315
+      },
+      "val_mse": 0.5103449076414108,
+      "val_mse_orig": 64606.84765625,
+      "epochs_run": 120,
+      "time": 5086.1,
+      "round": 3
+    },
+    {
+      "config": {
+        "learning_rate": 0.0009943461728031205,
+        "weight_decay": 0.023008006743332837,
+        "dropout": 0.11818188243475879,
+        "d_model": 96,
+        "n_layers": 3,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 2.25489208340618
+      },
+      "val_mse": 0.5125671178102493,
+      "val_mse_orig": 68804.095703125,
+      "epochs_run": 120,
+      "time": 324.7,
+      "round": 3
+    },
+    {
+      "config": {
+        "learning_rate": 0.0004359400788954502,
+        "weight_decay": 0.005389019400915858,
+        "dropout": 0.15500586367382385,
+        "d_model": 96,
+        "n_layers": 4,
+        "huber_delta": 2.0,
+        "timestep_weight_max": 1.204990352343015
+      },
+      "val_mse": 0.5137330889701843,
+      "val_mse_orig": 65819.623046875,
+      "epochs_run": 120,
+      "time": 418.3,
+      "round": 3
+    },
+    {
+      "config": {
+        "learning_rate": 0.00034592128827333365,
+        "weight_decay": 0.046865945210638145,
+        "dropout": 0.18568676545891594,
+        "d_model": 192,
+        "n_layers": 6,
+        "huber_delta": 1.0,
+        "timestep_weight_max": 1.4386415183145667
+      },
+      "val_mse": 0.5059055685997009,
+      "val_mse_orig": 68501.021484375,
+      "epochs_run": 80,
+      "time": 7170.7,
+      "round": 4
+    },
+    {
+      "config": {
+        "learning_rate": 0.00044466749640747783,
+        "weight_decay": 0.031007568657680916,
+        "dropout": 0.1342277296396194,
+        "d_model": 192,
+        "n_layers": 4,
+        "huber_delta": 0.5,
+        "timestep_weight_max": 1.9245204237022315
+      },
+      "val_mse": 0.5304751098155975,
+      "val_mse_orig": 70278.314453125,
+      "epochs_run": 78,
+      "time": 3307.7,
+      "round": 4
+    }
+  ]
+}
