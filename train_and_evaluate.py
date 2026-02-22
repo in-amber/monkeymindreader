@@ -69,19 +69,21 @@ TRAINING_MODES = {
     },
     'mega': {
         # For high-performance PC with 32GB RAM, NVIDIA GPU, unlimited time
-        'd_model': 128,
+        # Hyperparameters tuned via successive halving search (hyperparam_search.py, R9)
+        'd_model': 192,
         'n_heads': 8,
-        'n_layers': 4,
-        'learning_rate': 3e-4,
+        'n_layers': 6,
+        'learning_rate': 3.46e-4,
+        'weight_decay': 0.047,
         'n_epochs': 200,
         'batch_size': {'beignet': 64, 'affi': 16},
         'effective_batch_size': 64,  # Gradient accumulation target
         'patience': 50,
         'min_epochs': 30,
-        'dropout': 0.2,
+        'dropout': 0.186,
         'n_refinement_iters': 1,
         'aux_weight': 0.0,  # Disabled — empirically not helping
-        'timestep_weight_max': 2.0,  # Linear ramp from 1.0 to this for later timesteps
+        'timestep_weight_max': 1.44,  # Linear ramp from 1.0 to this for later timesteps
         'use_dual_heads': True,
         'use_temporal_conv': True,
     },
@@ -480,7 +482,8 @@ def train_and_evaluate(
         print(f"TensorBoard logs: {log_dir}", flush=True)
 
     # Setup training
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
+    weight_decay = config.get('weight_decay', 0.01)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     total_steps = n_epochs * (len(train_loader) // accumulation_steps)
     scheduler = get_lr_scheduler(optimizer, total_steps)
     criterion = ForecastingLoss(

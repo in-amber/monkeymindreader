@@ -5,8 +5,10 @@ Running log of model changes, experiments, and results. MSE values are normalize
 
 ## Current Active Configuration
 - **Architecture**: Factorized spatiotemporal encoder + dual near/far PredictionHeads + temporal conv
-- **Loss**: Huber (delta=1.0) with timestep weighting (1.0→2.0 ramp), MSE for validation/early stopping
+- **Model size**: d_model=192, n_heads=8, n_layers=6 (~2.35M params) — tuned via hyperparameter search
+- **Loss**: Huber (delta=1.0) with timestep weighting (1.0→1.44 ramp), MSE for validation/early stopping
 - **Loss weights**: smoothness=0.0, aux=0.0 (disabled)
+- **Optimizer**: AdamW lr=3.46e-4, weight_decay=0.047, dropout=0.186
 - **Early stopping**: patience=50, min_epochs=30 (mega mode)
 - **Training**: Gradient accumulation for Affi (effective batch 64 from 4x16)
 - **Refinement**: n_refinement_iters=1 in mega config, but use_refinement=False in all code paths
@@ -164,3 +166,16 @@ add genuine value without destabilizing training. Architecture locked in for Pha
 10. **Dual near/far heads + temporal conv** provide modest but consistent gains (-1.8% Beignet,
     -3.1% Affi). The temporal conv's learned gate and dual head blending give the model more
     flexibility without destabilizing training. Models also train longer before early stopping.
+11. **Hyperparameter search** found d=192/L=6 clearly beats d=128/L=4. Higher weight_decay (0.047)
+    benefits the larger model. Lower timestep_weight_max (1.44 vs 2.0) works better. The baseline
+    config was eliminated at 30 epochs — it's a slow starter, so successive halving slightly
+    disadvantages conservative configs. Final round confirmed d=192/L=6 wins.
+
+## Round 9 — Phase 3: Hyperparameter search (hyperparam_search.py) [PENDING EVAL]
+16 configs × 4 rounds (30/60/120/200 epochs) successive halving on Beignet.
+Searched: lr, weight_decay, dropout, d_model, n_layers, huber_delta, timestep_weight_max.
+Total search time: ~14.3 hours.
+
+Winner: d=192, L=6, lr=3.46e-4, wd=0.047, dropout=0.186, delta=1.0, tw=1.44
+Val MSE (search): 0.506 vs 0.514 baseline (-1.6% val MSE)
+Mega config updated. Full test evaluation pending.
