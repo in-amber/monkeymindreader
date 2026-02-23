@@ -71,6 +71,8 @@ TRAINING_MODES = {
         # For high-performance PC with 32GB RAM, NVIDIA GPU, unlimited time
         # Architecture: d=128/L=4 (d=192/L=6 tested in R9 — only +0.26% but 11x slower, not worth it)
         # Non-size hyperparameters tuned via successive halving search (hyperparam_search.py, R9)
+        # R12: Added per-channel amplitude augmentation (before normalization) to improve
+        #      cross-session generalization (hidden test has ~2-3x higher signal amplitude sessions)
         'd_model': 128,
         'n_heads': 8,
         'n_layers': 4,

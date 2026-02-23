@@ -77,11 +77,38 @@ class PerSampleNormalizer:
 class NeuralDataAugmentation:
     """
     Data augmentation for neural forecasting.
-    Includes electrode dropout and Gaussian noise.
+    Includes electrode dropout, Gaussian noise, and per-channel amplitude scaling.
+
+    Per-channel amplitude scaling (applied BEFORE normalization) simulates session drift
+    where each electrode's relative amplitude changes between recording days. This is the
+    key cross-session generalization challenge for this competition.
     """
-    def __init__(self, electrode_dropout_prob=0.1, noise_std=0.02):
+    def __init__(self, electrode_dropout_prob=0.1, noise_std=0.02,
+                 per_channel_scale_prob=0.8, per_channel_scale_std=0.7):
         self.electrode_dropout_prob = electrode_dropout_prob
         self.noise_std = noise_std
+        self.per_channel_scale_prob = per_channel_scale_prob
+        self.per_channel_scale_std = per_channel_scale_std
+
+    def per_channel_scale(self, sample):
+        """
+        Randomly scale each channel by an independent log-uniform factor.
+
+        Must be called BEFORE per-sample normalization. Simulates the day-to-day
+        drift in per-electrode signal amplitude that causes cross-session distribution
+        shift. With std=0.7, channels are typically scaled in the [0.5, 2.0] range,
+        covering the ~2-3x amplitude differences seen in practice across sessions.
+
+        Args:
+            sample: tensor of shape [T, C, F] (raw, un-normalized)
+        Returns:
+            scaled sample of same shape
+        """
+        if random.random() >= self.per_channel_scale_prob:
+            return sample
+        T, C, F = sample.shape
+        log_scales = torch.randn(1, C, 1) * self.per_channel_scale_std
+        return sample * torch.exp(log_scales)
 
     def electrode_dropout(self, x):
         """Randomly zero out electrodes to simulate missing channels."""
@@ -156,6 +183,13 @@ class NeuralForecastDataset(Dataset):
 
         # Convert to tensor
         sample = torch.tensor(sample, dtype=torch.float32)
+
+        # Per-channel amplitude augmentation BEFORE normalization.
+        # Simulates day-to-day drift in per-electrode signal amplitude across sessions.
+        # Global per-sample normalization removes the mean/std but NOT the relative
+        # per-channel amplitude ratios — these must be augmented explicitly.
+        if self.augmentation is not None and self.training:
+            sample = self.augmentation.per_channel_scale(sample)
 
         # Normalize using observed timesteps only (no data leakage from future)
         sample = sample.unsqueeze(0)  # [1, T, C, F]
