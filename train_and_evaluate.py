@@ -69,12 +69,13 @@ TRAINING_MODES = {
     },
     'mega': {
         # For high-performance PC with 32GB RAM, NVIDIA GPU, unlimited time
-        # Hyperparameters tuned via successive halving search (hyperparam_search.py, R9)
-        'd_model': 192,
+        # Architecture: d=128/L=4 (d=192/L=6 tested in R9 — only +0.26% but 11x slower, not worth it)
+        # Non-size hyperparameters tuned via successive halving search (hyperparam_search.py, R9)
+        'd_model': 128,
         'n_heads': 8,
-        'n_layers': 6,
+        'n_layers': 4,
         'learning_rate': 3.46e-4,
-        'weight_decay': 0.047,
+        'weight_decay': 0.02,   # 0.047 was tuned for d=192; scaled down for d=128
         'n_epochs': 200,
         'batch_size': {'beignet': 64, 'affi': 16},
         'effective_batch_size': 64,  # Gradient accumulation target
