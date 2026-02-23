@@ -9,6 +9,7 @@ Running log of model changes, experiments, and results. MSE values are normalize
 - **Loss**: Huber (delta=1.0) with timestep weighting (1.0→1.44 ramp), MSE for validation/early stopping
 - **Loss weights**: smoothness=0.0, aux=0.0 (disabled)
 - **Optimizer**: AdamW lr=3.46e-4, weight_decay=0.02, dropout=0.186
+- **SWA**: snapshot every 5 epochs from min_epochs, averaged at end of training
 - **Early stopping**: patience=50, min_epochs=30 (mega mode)
 - **Training**: Gradient accumulation for Affi (effective batch 64 from 4x16)
 - **Refinement**: n_refinement_iters=1 in mega config, but use_refinement=False in all code paths
@@ -166,6 +167,8 @@ add genuine value without destabilizing training. Architecture locked in for Pha
 10. **Dual near/far heads + temporal conv** provide modest but consistent gains (-1.8% Beignet,
     -3.1% Affi). The temporal conv's learned gate and dual head blending give the model more
     flexibility without destabilizing training. Models also train longer before early stopping.
+12. **Tuned non-size hyperparameters** (lr, wd, dropout, tw) transferred cleanly from the search
+    to d=128/L=4 — gave -3.0% Beignet, -1.7% Affi on test without any architecture change.
 11. **Hyperparameter search / successive halving** favors fast-converging (often larger) configs
     in early rounds. d=128/L=4 was eliminated at 30 epochs despite being competitive long-term.
     The actual test gain from d=192/L=6 was only 0.26% but 11x slower — not worth it.
@@ -191,6 +194,30 @@ Full eval with winning config (Beignet only):
 the search (lr=3.46e-4, dropout=0.186, tw=1.44) applied to d=128/L=4. weight_decay scaled
 down to 0.02 (0.047 was tuned for the larger model). Running R10 to evaluate.
 
+## Round 10 — Phase 3 eval: d=128/L=4 with tuned hyperparameters [KEPT]
+Same architecture as R8b, with hyperparameters from the search applied:
+lr 3e-4→3.46e-4, weight_decay 0.01→0.02, dropout 0.2→0.186, timestep_weight_max 2.0→1.44.
+
+| Monkey | Val MSE | Test MSE | Test MSE (orig) | vs R8b |
+|--------|---------|----------|-----------------|--------|
+| Beignet | 0.511 | 0.829 | 70,931 | **-3.0%** |
+| Affi | 1.528 | 1.379 | 48,540 | **-1.7%** |
+
+Both monkeys improved cleanly. Training faster than R8b (Beignet 661s vs 750s). Per-channel
+std also decreased for both (Beignet 48,885 vs 53,013; Affi 22,008 vs 23,773).
+
+**Cumulative progress vs R2 baseline**: Beignet -3.4%, Affi -12.5%.
+
+**Verdict**: Kept as new baseline. Adding SWA (Phase 4) for final submission.
+
 Key learning: successive halving favors large models that converge fast in early rounds.
+
+## Round 11 — Phase 4: SWA (FINAL SUBMISSION RUN) [PENDING]
+SWA added to training loop: snapshot every 5 epochs from min_epochs=30, averaged weights
+evaluated on val set after training, kept if better than best single checkpoint.
+All other config identical to R10.
+
+*(Results pending — this is the submission run)*
+
 The d=128/L=4 baseline was eliminated at 30 epochs despite being competitive long-term.
 Future searches should include a baseline warmup or use longer initial budgets.

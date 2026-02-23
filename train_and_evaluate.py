@@ -87,6 +87,7 @@ TRAINING_MODES = {
         'timestep_weight_max': 1.44,  # Linear ramp from 1.0 to this for later timesteps
         'use_dual_heads': True,
         'use_temporal_conv': True,
+        'swa_freq': 5,  # Collect SWA snapshot every N epochs (starting from min_epochs)
     },
 }
 
@@ -505,6 +506,10 @@ def train_and_evaluate(
     patience_counter = 0
     train_start_time = time.time()
 
+    # SWA: collect periodic snapshots for weight averaging
+    swa_freq = config.get('swa_freq', 0)
+    swa_snapshots = []
+
     print(f"\nStarting training...", flush=True)
 
     for epoch in range(n_epochs):
@@ -622,6 +627,10 @@ def train_and_evaluate(
         else:
             patience_counter += 1
 
+        # SWA: collect snapshot after min_epochs, every swa_freq epochs
+        if swa_freq > 0 and epoch >= min_epochs and epoch % swa_freq == 0:
+            swa_snapshots.append({k: v.cpu().clone() for k, v in model.state_dict().items()})
+
         if epoch % 10 == 0 or epoch == n_epochs - 1:
             print(f"Epoch {epoch:3d} | Train: {train_loss:.6f} | Val MSE: {val_mse:.6f} | Original MSE: {val_mse_original:.2f} | {epoch_time:.1f}s", flush=True)
 
@@ -631,6 +640,39 @@ def train_and_evaluate(
 
     total_train_time = time.time() - train_start_time
     epochs_trained = len(history['train_loss'])
+
+    # SWA: average collected snapshots and compare to best single checkpoint
+    swa_used = False
+    if swa_freq > 0 and len(swa_snapshots) >= 2:
+        print(f"\nSWA: averaging {len(swa_snapshots)} snapshots...", flush=True)
+        swa_state = {}
+        for key in swa_snapshots[0]:
+            swa_state[key] = torch.stack(
+                [snap[key].float() for snap in swa_snapshots]
+            ).mean(dim=0).to(swa_snapshots[0][key].dtype)
+
+        model.load_state_dict(swa_state)
+        model.eval()
+        swa_val_mse = 0.0
+        with torch.no_grad():
+            for x, y, mean, std in val_loader:
+                x, y = x.to(device), y.to(device)
+                y_main = y[:, :, :, 0]
+                pred = model(x, use_refinement=False, return_aux=False)
+                swa_val_mse += mse_fn(pred, y_main).item()
+        swa_val_mse /= len(val_loader)
+        print(f"SWA val MSE:        {swa_val_mse:.6f}", flush=True)
+        print(f"Best single val MSE: {best_val_mse:.6f}", flush=True)
+
+        if swa_val_mse < best_val_mse:
+            print("SWA is better — using averaged weights for test evaluation.", flush=True)
+            best_model_state = swa_state
+            best_val_mse = swa_val_mse
+            swa_used = True
+        else:
+            print("Single best checkpoint is better — keeping original.", flush=True)
+    elif swa_freq > 0:
+        print(f"SWA: only {len(swa_snapshots)} snapshot(s) collected — skipping averaging.", flush=True)
 
     # Load best model and evaluate on test set
     model.load_state_dict(best_model_state)
